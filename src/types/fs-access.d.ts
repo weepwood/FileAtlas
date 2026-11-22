@@ -5,3 +5,7 @@ interface Window {
 interface HTMLInputElement {
   webkitdirectory: boolean
 }
+
+interface DataTransferItem {
+  getAsFileSystemHandle?: () => Promise<FileSystemHandle | null>
+}

@@ -7,17 +7,18 @@ FileAtlas 是一个运行在浏览器中的本地文件分析与整理工作台�
 ## 已实现功能
 
 - Chromium File System Access API 目录授权
-- `webkitdirectory` 降级选择模式
-- 流式目录遍历、进度反馈和取消扫描
-- 文件夹树数据、文件搜索和虚拟列表
-- 文件类型占比、大小分布、一级目录空间矩形树图
-- 最大文件、空文件、空文件夹、深层路径和超长名称审计
+- `webkitdirectory` 降级选择模式与任意目录拖拽扫描
+- 内置一键体验「示例工作区」（含真实可验证 SHA-256 重复文件与审计样本）
+- 流式目录遍历、顶部实时进度条反馈和取消扫描
+- 文件夹树数据、按列排序、快捷键文件搜索（`/`）和虚拟列表
+- 文件类型占比环形图、大小分布柱图、一级目录空间矩形树图与比例排行条
+- 最大文件、空文件、空文件夹、深层路径和超长名称分类过滤审计
 - 重复文件三级检测：大小分组、抽样 SHA-256、完整 SHA-256
-- 相似文件名分组和批量重命名方案预览
-- IndexedDB 本地快照和两次快照差异比较
-- CSV、JSON、Markdown 本地导出
+- 相似文件名分组、快捷重命名预设和同名冲突预检
+- IndexedDB 本地快照、两次快照差异比较与变更文件明细
+- CSV、JSON、Markdown 本地导出与操作通知反馈
 - 浏览器能力检测和隐私说明
-- 响应式桌面与移动端界面
+- 深色星云 / 浅色晨雾双主题切换、指针聚光灯微交互与响应式桌面/移动端界面
 
 ## 技术栈
 
@@ -80,6 +81,16 @@ FileAtlas 使用能力检测决定是否启用功能，不仅依赖 User-Agent �
 - 首版不请求写入权限。
 
 ## 部署
+
+### GitHub Pages（自动化部署）
+
+仓库已内置 GitHub Actions 工作流（`.github/workflows/deploy.yml` 与 `.github/workflows/ci.yml`）：
+
+1. 在仓库 **Settings → Pages → Build and deployment** 中，将 **Source** 设置为 **GitHub Actions**。
+2. 推送代码到 `main` 分支（或在 **Actions** 页面手动触发 `Deploy to GitHub Pages` 工作流）。
+3. 工作流会自动完成依赖安装、代码检查、单元测试、动态子路径构建（自动生成 `404.html` SPA 路由回退与 `.nojekyll`）并发布至 `https://<username>.github.io/FileAtlas/`（如绑定自定义域名也会自动适配根路径 `/`）。
+
+### Netlify / 其他静态托管
 
 仓库包含 `netlify.toml`，可以直接导入 Netlify：
 

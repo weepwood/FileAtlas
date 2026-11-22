@@ -12,13 +12,22 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage').then((module) => 
 const SnapshotsPage = lazy(() => import('./pages/SnapshotsPage').then((module) => ({ default: module.SnapshotsPage })))
 const SpacePage = lazy(() => import('./pages/SpacePage').then((module) => ({ default: module.SpacePage })))
 
+const routerBasename = import.meta.env.BASE_URL.replace(/\/+$/, '') || '/'
+
 function PageFallback() {
-  return <div className="route-loading"><span className="pulse-dot" />正在加载模块</div>
+  return (
+    <div className="route-loading" role="status">
+      <div className="loading-orb">
+        <span className="pulse-dot" />
+      </div>
+      <span>正在载入分析模块…</span>
+    </div>
+  )
 }
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename}>
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route element={<Layout />}>
