@@ -6,8 +6,13 @@ import App from '../App'
 import { useFileAtlasStore } from '../store/useFileAtlasStore'
 import { useUiStore } from '../store/useUiStore'
 
+let latestChartOption: any = null
+
 vi.mock('../components/Chart', () => ({
-  Chart: ({ height }: { height?: number }) => <div data-testid="mock-chart" style={{ height }} />,
+  Chart: ({ option, height }: { option: any; height?: number }) => {
+    latestChartOption = option
+    return <div data-testid="mock-chart" style={{ height }} />
+  },
 }))
 
 describe('FileAtlas UI & interactions', () => {
@@ -66,6 +71,16 @@ describe('FileAtlas UI & interactions', () => {
 
     fireEvent.click(screen.getByRole('link', { name: /空间分析/ }))
     expect(await screen.findByText('目录与文件空间矩形树图')).toBeInTheDocument()
+
+    // Ensure treemap series sets explicit inset box margins without 100% overflow against ECharts 6 defaults
+    const treemapSeries = latestChartOption?.series?.[0]
+    expect(treemapSeries?.type).toBe('treemap')
+    expect(treemapSeries?.top).toBe(12)
+    expect(treemapSeries?.bottom).toBe(14)
+    expect(treemapSeries?.left).toBe(14)
+    expect(treemapSeries?.right).toBe(14)
+    expect(treemapSeries?.width).toBe('auto')
+    expect(treemapSeries?.height).toBe('auto')
 
     // Select a tiny folder via the quick direct-select pill bar
     const tinyEngineeringPill = screen.getByRole('button', { name: /Engineering.*KB/i })

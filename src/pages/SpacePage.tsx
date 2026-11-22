@@ -11,6 +11,7 @@ import {
   MousePointerClick,
   Pin,
   PinOff,
+  RotateCcw,
   Scaling,
   ZoomIn,
 } from 'lucide-react'
@@ -45,6 +46,7 @@ export function SpacePage() {
   const [scaleMode, setScaleMode] = useState<SpaceScaleMode>('perceptual')
   const [focusFilter, setFocusFilter] = useState<'all' | 'small'>('all')
   const [roamEnabled, setRoamEnabled] = useState(false)
+  const [roamResetKey, setRoamResetKey] = useState(0)
   const [sortAsc, setSortAsc] = useState(false)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [chartHoverPath, setChartHoverPath] = useState<string | null>(null)
@@ -149,8 +151,12 @@ export function SpacePage() {
       series: [
         {
           type: 'treemap',
-          width: '100%',
-          height: '100%',
+          left: 14,
+          top: 12,
+          right: 14,
+          bottom: 14,
+          width: 'auto',
+          height: 'auto',
           roam: roamEnabled,
           nodeClick: false,
           breadcrumb: { show: false },
@@ -291,12 +297,29 @@ export function SpacePage() {
               type="button"
               aria-pressed={roamEnabled}
               className={roamEnabled ? 'chip-btn active' : 'chip-btn'}
-              onClick={() => setRoamEnabled((prev) => !prev)}
+              onClick={() => {
+                setRoamEnabled((prev) => {
+                  if (prev) setRoamResetKey((seed) => seed + 1)
+                  return !prev
+                })
+              }}
               title="开启后可在树图上使用鼠标滚轮局部放大与拖拽平移"
             >
               <ZoomIn size={13} />
               <span>{roamEnabled ? '缩放已开' : '滚轮缩放'}</span>
             </button>
+
+            {roamEnabled && (
+              <button
+                type="button"
+                className="chip-btn"
+                onClick={() => setRoamResetKey((seed) => seed + 1)}
+                title="重置树图缩放与平移位置"
+              >
+                <RotateCcw size={12} />
+                <span>重置视图</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -411,8 +434,9 @@ export function SpacePage() {
 
         {treemapData.length > 0 ? (
           <Chart
+            key={`treemap-${activeScopePath}-${roamResetKey}`}
             option={chartOption}
-            height={440}
+            height={460}
             externalHighlightName={listHoverPath ?? (chartHoverPath ? undefined : selectedNode?.path ?? null)}
             onItemHover={setChartHoverPath}
             onItemClick={handleTileClick}
