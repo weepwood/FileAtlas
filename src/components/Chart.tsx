@@ -54,8 +54,9 @@ export function Chart({
   }, [onItemHover, onItemClick, onItemDoubleClick])
 
   useEffect(() => {
-    if (!elementRef.current) return
-    const chart = echarts.init(elementRef.current)
+    const mountEl = elementRef.current
+    if (!mountEl) return
+    const chart = echarts.init(mountEl)
     chartRef.current = chart
 
     const handleMouseOver = (params: { name?: unknown }) => {
@@ -82,10 +83,17 @@ export function Chart({
     chart.on('click', handleClick)
     chart.on('dblclick', handleDblClick)
 
-    const observer = new ResizeObserver(() => chart.resize())
-    observer.observe(elementRef.current)
+    const observer = new ResizeObserver(() => {
+      chart.resize()
+    })
+    observer.observe(mountEl)
+
+    const rafId = window.requestAnimationFrame(() => {
+      chart.resize()
+    })
 
     return () => {
+      window.cancelAnimationFrame(rafId)
       observer.disconnect()
       chart.off('mouseover', handleMouseOver)
       chart.off('globalout', handleGlobalOut)
@@ -104,23 +112,26 @@ export function Chart({
     const mergedOption: EChartsCoreOption = {
       color: CHART_PALETTE,
       animation: true,
-      animationDuration: 560,
+      animationDuration: 520,
       animationEasing: 'cubicOut',
       textStyle: {
         fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, sans-serif',
       },
       ...option,
       tooltip: {
+        appendTo: 'body',
+        confine: true,
+        enterable: false,
         backgroundColor: isDark ? 'rgba(9, 16, 30, 0.95)' : 'rgba(255, 255, 255, 0.97)',
         borderColor: isDark ? 'rgba(148, 163, 184, 0.24)' : 'rgba(15, 23, 42, 0.14)',
         borderWidth: 1,
         padding: [10, 14],
-        confine: true,
         textStyle: {
           color: isDark ? '#eef4ff' : '#0f172a',
           fontSize: 12,
         },
-        extraCssText: 'backdrop-filter: blur(14px); border-radius: 12px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);',
+        extraCssText:
+          'z-index: 9999; pointer-events: none; backdrop-filter: blur(14px); border-radius: 12px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);',
         ...(option.tooltip as Record<string, unknown> | undefined),
       },
     }
@@ -140,5 +151,9 @@ export function Chart({
     }
   }, [externalHighlightName])
 
-  return <div className="chart-canvas" ref={elementRef} style={{ height, width: '100%' }} />
+  return (
+    <div className="chart-shell" style={{ height }}>
+      <div className="chart-mount" ref={elementRef} />
+    </div>
+  )
 }
