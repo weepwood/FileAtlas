@@ -3,11 +3,14 @@ import { FolderOpen, LoaderCircle } from 'lucide-react'
 import { detectCapabilities } from '../services/capabilities'
 import { scanDirectoryHandle, scanFileList } from '../services/scanner'
 import { useFileAtlasStore } from '../store/useFileAtlasStore'
+import { useUiStore } from '../store/useUiStore'
+import { formatBytes } from '../utils/file'
 
-export function ScanButton() {
+export function ScanButton({ label = '选择文件夹' }: { label?: string }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [controller, setController] = useState<AbortController | null>(null)
   const { status, setScanning, setProgress, setResult, setError } = useFileAtlasStore()
+  const { setIsDemo, pushToast } = useUiStore()
 
   const run = async () => {
     const capabilities = detectCapabilities()
@@ -20,15 +23,26 @@ export function ScanButton() {
     try {
       const handle = await window.showDirectoryPicker?.({ mode: 'read', id: 'fileatlas-root' })
       if (!handle) return
+      setIsDemo(false)
       setScanning()
       const result = await scanDirectoryHandle(handle, { onProgress: setProgress, signal: nextController.signal })
       setResult(result.rootName, result.entries, result.files, result.statistics)
+      pushToast({
+        tone: 'success',
+        title: `已完成「${result.rootName}」扫描`,
+        message: `共索引 ${result.statistics.fileCount.toLocaleString()} 个文件 · ${formatBytes(result.statistics.totalSize)}`,
+      })
     } catch (error) {
       if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'NotAllowedError')) {
-        if (error.name === 'AbortError' && status === 'scanning') setError('扫描已取消')
+        if (error.name === 'AbortError' && status === 'scanning') {
+          setError('扫描已取消')
+          pushToast({ tone: 'info', title: '扫描已取消' })
+        }
         return
       }
-      setError(error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      setError(message)
+      pushToast({ tone: 'error', title: '扫描遇到问题', message })
     } finally {
       setController(null)
     }
@@ -38,12 +52,20 @@ export function ScanButton() {
     if (!files?.length) return
     const nextController = new AbortController()
     setController(nextController)
+    setIsDemo(false)
     setScanning()
     try {
       const result = await scanFileList(files, { onProgress: setProgress, signal: nextController.signal })
       setResult(result.rootName, result.entries, result.files, result.statistics)
+      pushToast({
+        tone: 'success',
+        title: `已完成「${result.rootName}」扫描`,
+        message: `共索引 ${result.statistics.fileCount.toLocaleString()} 个文件 · ${formatBytes(result.statistics.totalSize)}`,
+      })
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      setError(message)
+      pushToast({ tone: 'error', title: '扫描遇到问题', message })
     } finally {
       setController(null)
       if (inputRef.current) inputRef.current.value = ''
@@ -52,16 +74,18 @@ export function ScanButton() {
 
   if (status === 'scanning') {
     return (
-      <button className="button danger-button" onClick={() => controller?.abort()}>
-        <LoaderCircle className="spin" size={17} /> 取消扫描
+      <button type="button" className="button danger-button" onClick={() => controller?.abort()}>
+        <LoaderCircle className="spin" size={17} />
+        <span>取消扫描</span>
       </button>
     )
   }
 
   return (
     <>
-      <button className="button primary-button" onClick={run}>
-        <FolderOpen size={17} /> 选择文件夹
+      <button type="button" className="button primary-button" onClick={() => void run()}>
+        <FolderOpen size={17} />
+        <span>{label}</span>
       </button>
       <input
         ref={inputRef}

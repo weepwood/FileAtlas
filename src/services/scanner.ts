@@ -109,7 +109,7 @@ export async function scanDirectoryHandle(root: FileSystemDirectoryHandle, optio
   return { rootName: root.name, entries, files, statistics: await analyze(entries) }
 }
 
-export async function scanFileList(fileList: FileList, options: ScanOptions = {}): Promise<ScanResult> {
+export async function scanFileList(fileList: FileList | File[], options: ScanOptions = {}): Promise<ScanResult> {
   const entries: FileEntryRecord[] = []
   const files = new Map<string, File>()
   const directories = new Set<string>()
@@ -166,4 +166,108 @@ export async function scanFileList(fileList: FileList, options: ScanOptions = {}
   entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'zh-CN'))
   emitProgress(entries, rootName, options.onProgress)
   return { rootName, entries, files, statistics: await analyze(entries) }
+}
+
+async function readWebkitDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+  const all: FileSystemEntry[] = []
+  while (true) {
+    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
+      reader.readEntries(resolve, reject)
+    })
+    if (!batch.length) break
+    all.push(...batch)
+  }
+  return all
+}
+
+export async function scanDroppedDataTransfer(dataTransfer: DataTransfer, options: ScanOptions = {}): Promise<ScanResult | null> {
+  const itemList = Array.from(dataTransfer.items ?? [])
+  const firstItem = itemList[0]
+  if (!firstItem) return null
+
+  // Prefer modern File System Access handle when supported
+  if (typeof firstItem.getAsFileSystemHandle === 'function') {
+    const handle = await firstItem.getAsFileSystemHandle()
+    if (handle && handle.kind === 'directory') {
+      return scanDirectoryHandle(handle as FileSystemDirectoryHandle, options)
+    }
+  }
+
+  // Fallback to standard webkitGetAsEntry recursive traversal
+  const rootEntry = firstItem.webkitGetAsEntry?.()
+  if (rootEntry && rootEntry.isDirectory) {
+    const dirRoot = rootEntry as FileSystemDirectoryEntry
+    const entries: FileEntryRecord[] = []
+    const files = new Map<string, File>()
+    const queue: Array<{ entry: FileSystemDirectoryEntry; relativePath: string; depth: number }> = [
+      { entry: dirRoot, relativePath: dirRoot.name, depth: 0 },
+    ]
+    let processed = 0
+
+    while (queue.length) {
+      assertNotAborted(options.signal)
+      const current = queue.shift()!
+      const children = await readWebkitDirectoryEntries(current.entry.createReader())
+
+      entries.push({
+        id: createEntryId(current.relativePath, 'directory'),
+        name: current.entry.name,
+        normalizedName: normalizeFileName(current.entry.name),
+        relativePath: current.relativePath,
+        parentPath: current.relativePath.includes('/') ? current.relativePath.slice(0, current.relativePath.lastIndexOf('/')) : '',
+        kind: 'directory',
+        extension: '',
+        mimeType: '',
+        size: 0,
+        lastModified: 0,
+        depth: current.depth,
+        isEmptyDirectory: children.length === 0,
+      })
+
+      for (const child of children) {
+        assertNotAborted(options.signal)
+        if (options.ignoreDefaults !== false && DEFAULT_IGNORES.has(child.name)) continue
+        const relativePath = `${current.relativePath}/${child.name}`
+        if (child.isDirectory) {
+          queue.push({ entry: child as FileSystemDirectoryEntry, relativePath, depth: current.depth + 1 })
+        } else if (child.isFile) {
+          const file = await new Promise<File>((resolve, reject) => {
+            ;(child as FileSystemFileEntry).file(resolve, reject)
+          })
+          const id = createEntryId(relativePath, 'file')
+          entries.push({
+            id,
+            name: file.name,
+            normalizedName: normalizeFileName(file.name),
+            relativePath,
+            parentPath: current.relativePath,
+            kind: 'file',
+            extension: getExtension(file.name),
+            mimeType: file.type,
+            size: file.size,
+            lastModified: file.lastModified,
+            depth: current.depth + 1,
+          })
+          files.set(id, file)
+        }
+        processed += 1
+        if (processed >= 200) {
+          emitProgress(entries, relativePath, options.onProgress)
+          processed = 0
+          await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        }
+      }
+    }
+
+    entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'zh-CN'))
+    emitProgress(entries, dirRoot.name, options.onProgress)
+    return { rootName: dirRoot.name, entries, files, statistics: await analyze(entries) }
+  }
+
+  // Fallback if loose files were dropped
+  if (dataTransfer.files?.length) {
+    return scanFileList(dataTransfer.files, options)
+  }
+
+  return null
 }
