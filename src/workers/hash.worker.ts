@@ -40,9 +40,21 @@ async function fullHash(file: File): Promise<string | undefined> {
 
 self.onmessage = async (event: MessageEvent<{ candidates: HashCandidate[] }>) => {
   try {
+    const candidates = event.data.candidates
     const sampled: HashedCandidate[] = []
-    for (const candidate of event.data.candidates) {
+    const totalSampling = candidates.length
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidate = candidates[i]
       sampled.push({ ...candidate, sampleHash: await sampleHash(candidate.file) })
+      if ((i + 1) % 8 === 0 || i + 1 === totalSampling) {
+        self.postMessage({
+          type: 'progress',
+          phase: 'sampling',
+          processed: i + 1,
+          total: totalSampling,
+        })
+      }
     }
 
     const sampleGroups = new Map<string, HashedCandidate[]>()
@@ -53,6 +65,12 @@ self.onmessage = async (event: MessageEvent<{ candidates: HashCandidate[] }>) =>
       sampleGroups.set(key, group)
     }
 
+    const activeSampleGroups = [...sampleGroups.values()].filter((group) => group.length >= 2)
+    const fullTargets = activeSampleGroups
+      .filter((group) => group[0].size <= FULL_HASH_LIMIT)
+      .reduce((sum, group) => sum + group.length, 0)
+    let fullProcessed = 0
+
     const results: Array<{
       id: string
       certainty: 'confirmed' | 'probable'
@@ -61,8 +79,7 @@ self.onmessage = async (event: MessageEvent<{ candidates: HashCandidate[] }>) =>
       size: number
     }> = []
 
-    for (const group of sampleGroups.values()) {
-      if (group.length < 2) continue
+    for (const group of activeSampleGroups) {
       if (group[0].size > FULL_HASH_LIMIT) {
         results.push({
           id: crypto.randomUUID(),
@@ -76,7 +93,17 @@ self.onmessage = async (event: MessageEvent<{ candidates: HashCandidate[] }>) =>
 
       const fullGroups = new Map<string, HashedCandidate[]>()
       for (const item of group) {
-        item.fullHash = await fullHash(item.file)
+        // For files <= 192 KB, sampleHash already hashed the entire file!
+        item.fullHash = item.size <= CHUNK_SIZE * 3 ? item.sampleHash : await fullHash(item.file)
+        fullProcessed += 1
+        if (fullProcessed % 4 === 0 || fullProcessed === fullTargets) {
+          self.postMessage({
+            type: 'progress',
+            phase: 'full',
+            processed: fullProcessed,
+            total: fullTargets,
+          })
+        }
         if (!item.fullHash) continue
         const matches = fullGroups.get(item.fullHash) ?? []
         matches.push(item)
@@ -93,8 +120,12 @@ self.onmessage = async (event: MessageEvent<{ candidates: HashCandidate[] }>) =>
         })
       }
     }
-    self.postMessage({ ok: true, results })
+    self.postMessage({ type: 'result', ok: true, results })
   } catch (error) {
-    self.postMessage({ ok: false, error: error instanceof Error ? error.message : String(error) })
+    self.postMessage({
+      type: 'result',
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    })
   }
 }

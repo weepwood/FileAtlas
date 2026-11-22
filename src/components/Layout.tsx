@@ -13,6 +13,7 @@ import {
   ListRestart,
   Moon,
   RotateCcw,
+  Search,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -20,12 +21,14 @@ import {
   Tags,
 } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { CommandPalette } from './CommandPalette'
+import { FilePreviewDrawer } from './FilePreviewDrawer'
 import { ScanButton } from './ScanButton'
 import { ToastViewport } from './ToastViewport'
 import { scanDroppedDataTransfer } from '../services/scanner'
 import { useFileAtlasStore } from '../store/useFileAtlasStore'
 import { useUiStore } from '../store/useUiStore'
-import { formatBytes } from '../utils/file'
+import { detectJunkReason, formatBytes } from '../utils/file'
 
 const navGroups = [
   {
@@ -56,9 +59,29 @@ const navGroups = [
 
 export function Layout() {
   const location = useLocation()
-  const { rootName, entries, statistics, duplicates, status, progress, setScanning, setProgress, setResult, setError, reset } =
-    useFileAtlasStore()
-  const { theme, toggleTheme, isDemo, setIsDemo, pushToast } = useUiStore()
+  const {
+    rootName,
+    entries,
+    statistics,
+    duplicates,
+    status,
+    progress,
+    setScanning,
+    setProgress,
+    setResult,
+    setError,
+    reset,
+  } = useFileAtlasStore()
+  const {
+    theme,
+    toggleTheme,
+    isDemo,
+    setIsDemo,
+    pushToast,
+    scanConfig,
+    setCommandPaletteOpen,
+    closePreview,
+  } = useUiStore()
   const [dragDepth, setDragDepth] = useState(0)
 
   const riskCount = useMemo(() => {
@@ -68,7 +91,8 @@ export function Layout() {
       const isEmptyDir = entry.kind === 'directory' && entry.isEmptyDirectory
       const isDeep = entry.depth >= 8
       const isLong = entry.name.length >= 120
-      return sum + (isEmptyFile || isEmptyDir || isDeep || isLong ? 1 : 0)
+      const isJunk = Boolean(detectJunkReason(entry))
+      return sum + (isEmptyFile || isEmptyDir || isDeep || isLong || isJunk ? 1 : 0)
     }, 0)
   }, [entries, status])
 
@@ -106,7 +130,10 @@ export function Layout() {
     setIsDemo(false)
     setScanning()
     try {
-      const result = await scanDroppedDataTransfer(event.dataTransfer, { onProgress: setProgress })
+      const result = await scanDroppedDataTransfer(event.dataTransfer, {
+        ...scanConfig,
+        onProgress: setProgress,
+      })
       if (!result) {
         reset()
         return
@@ -125,6 +152,7 @@ export function Layout() {
   }
 
   const handleReset = () => {
+    closePreview()
     reset()
     setIsDemo(false)
     pushToast({ tone: 'info', title: '已清空当前会话索引' })
@@ -243,6 +271,18 @@ export function Layout() {
           <div className="topbar-actions">
             <button
               type="button"
+              className="cmd-trigger-btn"
+              aria-label="打开全局命令与文件检索面板"
+              title="快速检索文件或执行指令 (Ctrl/⌘ + K)"
+              onClick={() => setCommandPaletteOpen(true)}
+            >
+              <Search size={14} />
+              <span>快速检索…</span>
+              <kbd className="kbd-hint">⌘K</kbd>
+            </button>
+
+            <button
+              type="button"
               className="icon-button theme-toggle"
               aria-label={theme === 'dark' ? '切换为浅色主题' : '切换为深色主题'}
               title={theme === 'dark' ? '切换为浅色模式' : '切换为深色模式'}
@@ -276,6 +316,8 @@ export function Layout() {
         </section>
       </main>
 
+      <FilePreviewDrawer />
+      <CommandPalette />
       <ToastViewport />
     </div>
   )

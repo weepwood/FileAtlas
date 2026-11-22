@@ -1,9 +1,13 @@
-import type { ReactNode } from 'react'
-import { Cpu, Database, FolderSearch, HardDriveDownload, ShieldCheck, Sparkles } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Cpu, Database, FolderClock, FolderSearch, HardDriveDownload, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { ScanButton } from './ScanButton'
+import { deleteRecentDirectory, listRecentDirectories, saveRecentDirectory } from '../services/database'
 import { generateDemoWorkspace } from '../services/demo'
+import { scanDirectoryHandle } from '../services/scanner'
 import { useFileAtlasStore } from '../store/useFileAtlasStore'
 import { useUiStore } from '../store/useUiStore'
+import type { RecentDirectoryRecord } from '../types'
+import { formatBytes, formatRelativeAge, nowTimestamp } from '../utils/file'
 import { handleSpotlightMove } from '../utils/spotlight'
 
 interface EmptyStateProps {
@@ -19,9 +23,21 @@ export function EmptyState({
   variant,
   action,
 }: EmptyStateProps) {
-  const { status, setResult } = useFileAtlasStore()
-  const { setIsDemo, pushToast } = useUiStore()
+  const { status, setScanning, setProgress, setResult, setError } = useFileAtlasStore()
+  const { scanConfig, setIsDemo, pushToast } = useUiStore()
   const resolvedVariant = variant ?? (status === 'idle' ? 'workspace' : 'inline')
+  const [recentDirs, setRecentDirs] = useState<RecentDirectoryRecord[]>([])
+
+  useEffect(() => {
+    if (resolvedVariant !== 'workspace') return
+    let active = true
+    void listRecentDirectories().then((items) => {
+      if (active) setRecentDirs(items.filter((item) => Boolean(item.handle)))
+    })
+    return () => {
+      active = false
+    }
+  }, [resolvedVariant])
 
   const loadDemo = () => {
     const demo = generateDemoWorkspace()
@@ -30,8 +46,46 @@ export function EmptyState({
     pushToast({
       tone: 'info',
       title: '已载入示例工作区',
-      message: '包含可验证 SHA-256 的重复文件、相似命名簇与健康审计样本。',
+      message: '包含可验证 SHA-256 的重复文件、代码文档预览与健康审计样本。',
     })
+  }
+
+  const reopenRecent = async (record: RecentDirectoryRecord) => {
+    if (!record.handle) return
+    try {
+      const currentPerm = await record.handle.queryPermission?.({ mode: 'read' })
+      if (currentPerm !== 'granted') {
+        const nextPerm = await record.handle.requestPermission?.({ mode: 'read' })
+        if (nextPerm !== 'granted') return
+      }
+      setIsDemo(false)
+      setScanning()
+      const result = await scanDirectoryHandle(record.handle, {
+        ...scanConfig,
+        onProgress: setProgress,
+      })
+      setResult(result.rootName, result.entries, result.files, result.statistics)
+      void saveRecentDirectory({
+        ...record,
+        lastScannedAt: nowTimestamp(),
+        fileCount: result.statistics.fileCount,
+        totalSize: result.statistics.totalSize,
+      })
+      pushToast({
+        tone: 'success',
+        title: `已快速重扫「${result.rootName}」`,
+        message: `共索引 ${result.statistics.fileCount.toLocaleString()} 个文件 · ${formatBytes(result.statistics.totalSize)}`,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setError(message)
+      pushToast({ tone: 'error', title: '重新读取目录失败', message })
+    }
+  }
+
+  const removeRecent = async (id: string) => {
+    await deleteRecentDirectory(id)
+    setRecentDirs((prev) => prev.filter((item) => item.id !== id))
   }
 
   if (resolvedVariant === 'inline') {
@@ -75,8 +129,40 @@ export function EmptyState({
 
       <div className="drop-hint-pill">
         <HardDriveDownload size={14} />
-        <span>支持将任意本地文件夹直接拖拽到浏览器窗口中快速扫描</span>
+        <span>支持将任意本地文件夹直接拖拽到浏览器窗口中快速扫描 · 按 Ctrl/⌘ + K 全局检索</span>
       </div>
+
+      {recentDirs.length > 0 && (
+        <div className="recent-dirs-box" aria-label="最近扫描目录">
+          <span className="recent-dirs-label">
+            <FolderClock size={13} /> 最近访问目录（一键授权重扫）：
+          </span>
+          <div className="recent-dirs-list">
+            {recentDirs.map((item) => (
+              <div className="recent-dir-pill" key={item.id}>
+                <button
+                  type="button"
+                  className="recent-dir-main"
+                  onClick={() => void reopenRecent(item)}
+                >
+                  <strong>{item.name}</strong>
+                  <small className="tabular-nums">
+                    {formatBytes(item.totalSize)} · {formatRelativeAge(item.lastScannedAt)}
+                  </small>
+                </button>
+                <button
+                  type="button"
+                  className="recent-dir-remove"
+                  aria-label={`移除最近目录 ${item.name}`}
+                  onClick={() => void removeRecent(item.id)}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="hero-pillars">
         <div className="hero-pillar">
@@ -90,14 +176,14 @@ export function EmptyState({
           <Cpu size={17} />
           <div>
             <strong>多线程指纹引擎</strong>
-            <span>Web Worker + 抽样/完整 SHA-256</span>
+            <span>大体积优先校验 + 抽样/完整 SHA-256</span>
           </div>
         </div>
         <div className="hero-pillar">
           <Database size={17} />
           <div>
             <strong>本地快照与导出</strong>
-            <span>IndexedDB 差异对比与多格式报告</span>
+            <span>移动重命名识别 + 独立 HTML 报告</span>
           </div>
         </div>
       </div>

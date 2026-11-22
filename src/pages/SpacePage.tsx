@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Copy,
   CornerLeftUp,
+  Eye,
   FolderOpen,
   Home,
   LocateFixed,
@@ -15,12 +16,13 @@ import {
   Scaling,
   ZoomIn,
 } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { Chart } from '../components/Chart'
 import { EmptyState } from '../components/EmptyState'
 import { FileTypeIcon } from '../components/FileBadge'
 import { useFileAtlasStore } from '../store/useFileAtlasStore'
 import { useUiStore } from '../store/useUiStore'
-import { formatBytes } from '../utils/file'
+import { createEntryId, formatBytes } from '../utils/file'
 import {
   aggregateSpaceNodes,
   buildTreemapData,
@@ -39,10 +41,12 @@ function escapeHtml(text: string): string {
 }
 
 export function SpacePage() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const { rootName, entries, statistics, status } = useFileAtlasStore()
-  const { theme, pushToast } = useUiStore()
+  const { theme, pushToast, openPreview } = useUiStore()
 
-  const [scopePath, setScopePath] = useState('')
+  const scopeParam = searchParams.get('scope') ?? ''
+  const [scopePath, setScopePath] = useState(scopeParam)
   const [scaleMode, setScaleMode] = useState<SpaceScaleMode>('perceptual')
   const [focusFilter, setFocusFilter] = useState<'all' | 'small'>('all')
   const [roamEnabled, setRoamEnabled] = useState(false)
@@ -52,8 +56,11 @@ export function SpacePage() {
   const [chartHoverPath, setChartHoverPath] = useState<string | null>(null)
   const [listHoverPath, setListHoverPath] = useState<string | null>(null)
 
+  const requestedScope = scopePath || scopeParam
   const activeScopePath =
-    scopePath && (scopePath === rootName || scopePath.startsWith(`${rootName}/`)) ? scopePath : rootName
+    requestedScope && (requestedScope === rootName || requestedScope.startsWith(`${rootName}/`))
+      ? requestedScope
+      : rootName
 
   const { nodes: allScopeNodes, scopeTotalSize } = useMemo(
     () => aggregateSpaceNodes(entries, activeScopePath, statistics.totalSize),
@@ -104,13 +111,22 @@ export function SpacePage() {
 
   const isDark = theme === 'dark'
 
-  const enterDirectory = useCallback((targetPath: string) => {
-    setScopePath(targetPath)
-    setSelectedPath(null)
-    setChartHoverPath(null)
-    setListHoverPath(null)
-    setFocusFilter('all')
-  }, [])
+  const enterDirectory = useCallback(
+    (targetPath: string) => {
+      setScopePath(targetPath)
+      if (searchParams.has('scope')) {
+        const next = new URLSearchParams(searchParams)
+        if (targetPath === rootName) next.delete('scope')
+        else next.set('scope', targetPath)
+        setSearchParams(next, { replace: true })
+      }
+      setSelectedPath(null)
+      setChartHoverPath(null)
+      setListHoverPath(null)
+      setFocusFilter('all')
+    },
+    [rootName, searchParams, setSearchParams],
+  )
 
   const handleTileClick = useCallback((path: string) => {
     setSelectedPath((prev) => (prev === path ? null : path))
@@ -138,7 +154,7 @@ export function SpacePage() {
           const hint =
             datum.kind === 'directory'
               ? '<br/><span style="opacity:.72;font-size:11px">单击锁定选中 · 双击下钻进入目录</span>'
-              : '<br/><span style="opacity:.72;font-size:11px">单击锁定选中查看完整路径</span>'
+              : '<br/><span style="opacity:.72;font-size:11px">单击锁定选中查看详情与预览</span>'
           return [
             `<strong>${escapeHtml(datum.label)}</strong> <span style="opacity:.7">(${escapeHtml(kindBadge)})</span>`,
             `<br/>实际占用：<strong>${formatBytes(datum.realSize)}</strong>`,
@@ -408,6 +424,14 @@ export function SpacePage() {
                 <button
                   type="button"
                   className="chip-btn"
+                  onClick={() => openPreview(createEntryId(inspectedNode.path, inspectedNode.kind))}
+                >
+                  <Eye size={12} />
+                  <span>详情</span>
+                </button>
+                <button
+                  type="button"
+                  className="chip-btn"
                   onClick={() => void copyPath(inspectedNode.path)}
                 >
                   <Copy size={12} />
@@ -543,6 +567,15 @@ export function SpacePage() {
                   )}
                   <span className="share-pill tabular-nums">{formatSharePercent(node.scopeShare)}</span>
                   <b className="tabular-nums">{formatBytes(node.realSize)}</b>
+                  <button
+                    type="button"
+                    className="mini-action-btn"
+                    title="预览详情"
+                    aria-label={`查看 ${node.label} 详情`}
+                    onClick={() => openPreview(createEntryId(node.path, node.kind))}
+                  >
+                    <Eye size={13} />
+                  </button>
                   <button
                     type="button"
                     className="mini-action-btn"
