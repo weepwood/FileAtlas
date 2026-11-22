@@ -8,6 +8,7 @@ import { StatCard } from '../components/StatCard'
 import { useFileAtlasStore } from '../store/useFileAtlasStore'
 import { useUiStore } from '../store/useUiStore'
 import { formatBytes } from '../utils/file'
+import { formatSharePercent } from '../utils/space'
 import { copyTextToClipboard, handleSpotlightMove } from '../utils/spotlight'
 
 export function DashboardPage() {
@@ -145,8 +146,10 @@ export function DashboardPage() {
             option={{
               tooltip: {
                 trigger: 'item',
-                formatter: (params: any) =>
-                  `<strong>${params.name}</strong><br/>空间：${formatBytes(params.value)} (${params.percent}%)`,
+                formatter: (params: any) => {
+                  const pct = statistics.totalSize ? (Number(params.value) / statistics.totalSize) * 100 : 0
+                  return `<strong>${params.name}</strong><br/>空间：${formatBytes(params.value)} (${formatSharePercent(pct)})`
+                },
               },
               legend: {
                 bottom: 6,
@@ -158,6 +161,7 @@ export function DashboardPage() {
               series: [
                 {
                   type: 'pie',
+                  minAngle: 7,
                   radius: ['50%', '74%'],
                   center: ['50%', '43%'],
                   avoidLabelOverlap: true,
