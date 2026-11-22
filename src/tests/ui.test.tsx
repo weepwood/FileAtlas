@@ -58,4 +58,27 @@ describe('FileAtlas UI & interactions', () => {
     expect(emptyFileCard).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByText('draft-notes-pending.md')).toBeInTheDocument()
   })
+
+  it('allows selecting tiny folders and drilling down in Space Analysis', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /体验示例工作区/ }))
+    await screen.findByText('文件系统总览')
+
+    fireEvent.click(screen.getByRole('link', { name: /空间分析/ }))
+    expect(await screen.findByText('目录与文件空间矩形树图')).toBeInTheDocument()
+
+    // Select a tiny folder via the quick direct-select pill bar
+    const tinyEngineeringPill = screen.getByRole('button', { name: /Engineering.*KB/i })
+    fireEvent.click(tinyEngineeringPill)
+    expect(screen.getByText('已锁定选中')).toBeInTheDocument()
+
+    // Drill down into Engineering to inspect small files inside it
+    fireEvent.click(screen.getByRole('button', { name: /进入子目录/ }))
+    expect((await screen.findAllByText('package.json')).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('tsconfig.json').length).toBeGreaterThanOrEqual(1)
+
+    // Navigate back up via breadcrumb button
+    fireEvent.click(screen.getByRole('button', { name: /返回上级/ }))
+    expect((await screen.findAllByText('Media-Production')).length).toBeGreaterThanOrEqual(1)
+  })
 })
