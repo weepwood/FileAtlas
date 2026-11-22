@@ -1,21 +1,46 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Search, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Eye, FilterX, Search, X } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { EmptyState } from '../components/EmptyState'
 import { FileTypeIcon } from '../components/FileBadge'
 import { useFileAtlasStore } from '../store/useFileAtlasStore'
 import { useUiStore } from '../store/useUiStore'
-import { formatBytes } from '../utils/file'
-import { copyTextToClipboard } from '../utils/spotlight'
+import { AGE_BUCKETS, formatBytes, getAgeBucket, getSizeBucket, SIZE_BUCKETS } from '../utils/file'
+import { copyTextToClipboard, getFileCategory, type FileCategory } from '../utils/spotlight'
 
 type SortField = 'name' | 'kind' | 'size' | 'lastModified'
 type SortDirection = 'asc' | 'desc'
 
+const CATEGORY_OPTIONS: Array<{ value: 'all' | FileCategory; label: string }> = [
+  { value: 'all', label: '全部大类' },
+  { value: 'video', label: '视频' },
+  { value: 'image', label: '图片' },
+  { value: 'document', label: '文档' },
+  { value: 'code', label: '代码' },
+  { value: 'archive', label: '压缩包' },
+  { value: 'audio', label: '音频' },
+  { value: 'data', label: '数据' },
+  { value: 'other', label: '其他' },
+]
+
 export function ExplorerPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const { entries, status } = useFileAtlasStore()
-  const { pushToast } = useUiStore()
-  const [query, setQuery] = useState('')
-  const [kind, setKind] = useState<'all' | 'file' | 'directory'>('all')
+  const { pushToast, openPreview } = useUiStore()
+
+  const extParam = searchParams.get('ext') ?? ''
+  const parentParam = searchParams.get('parent') ?? ''
+  const initialSizeBucket = searchParams.get('sizeBucket') ?? 'all'
+  const initialAgeBucket = searchParams.get('ageBucket') ?? 'all'
+
+  const [query, setQuery] = useState(searchParams.get('q') ?? '')
+  const [kind, setKind] = useState<'all' | 'file' | 'directory'>(
+    extParam || initialSizeBucket !== 'all' || initialAgeBucket !== 'all' ? 'file' : 'all',
+  )
+  const [category, setCategory] = useState<'all' | FileCategory>('all')
+  const [sizeBucket, setSizeBucket] = useState<string>(initialSizeBucket)
+  const [ageBucket, setAgeBucket] = useState<string>(initialAgeBucket)
   const [sortField, setSortField] = useState<SortField>('size')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
 
@@ -24,7 +49,11 @@ export function ExplorerPage() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'SELECT') {
+      if (
+        event.key === '/' &&
+        document.activeElement?.tagName !== 'INPUT' &&
+        document.activeElement?.tagName !== 'SELECT'
+      ) {
         event.preventDefault()
         searchInputRef.current?.focus()
       }
@@ -45,9 +74,26 @@ export function ExplorerPage() {
 
   const filtered = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase()
+    const normalizedExt = extParam.trim().toLocaleLowerCase()
+    const parentPrefix = parentParam ? `${parentParam}/` : ''
+
     const base = entries.filter((entry) => {
-      const matchesQuery = !normalizedQuery || entry.relativePath.toLocaleLowerCase().includes(normalizedQuery)
-      return matchesQuery && (kind === 'all' || entry.kind === kind)
+      if (kind !== 'all' && entry.kind !== kind) return false
+      if (parentPrefix && !entry.relativePath.startsWith(parentPrefix)) return false
+      if (normalizedQuery && !entry.relativePath.toLocaleLowerCase().includes(normalizedQuery)) return false
+      if (normalizedExt) {
+        if (entry.kind !== 'file' || entry.extension.toLocaleLowerCase() !== normalizedExt) return false
+      }
+      if (category !== 'all') {
+        if (entry.kind !== 'file' || getFileCategory(entry.extension) !== category) return false
+      }
+      if (sizeBucket !== 'all') {
+        if (getSizeBucket(entry.size) !== sizeBucket) return false
+      }
+      if (ageBucket !== 'all') {
+        if (getAgeBucket(entry.lastModified) !== ageBucket) return false
+      }
+      return true
     })
 
     const factor = sortDirection === 'asc' ? 1 : -1
@@ -65,7 +111,13 @@ export function ExplorerPage() {
       }
       return (a.lastModified - b.lastModified) * factor
     })
-  }, [entries, kind, query, sortDirection, sortField])
+  }, [ageBucket, category, entries, extParam, kind, parentParam, query, sizeBucket, sortDirection, sortField])
+
+  const filteredTotalSize = useMemo(
+    () =>
+      filtered.reduce((sum, item) => (item.kind === 'file' ? sum + item.size : sum), 0),
+    [filtered],
+  )
 
   // TanStack Virtual intentionally exposes mutable measurement functions.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -77,6 +129,27 @@ export function ExplorerPage() {
   })
 
   if (status === 'idle') return <EmptyState />
+
+  const hasActiveFilters = Boolean(
+    query ||
+      kind !== 'all' ||
+      category !== 'all' ||
+      sizeBucket !== 'all' ||
+      ageBucket !== 'all' ||
+      extParam ||
+      parentParam,
+  )
+
+  const clearAllFilters = () => {
+    setQuery('')
+    setKind('all')
+    setCategory('all')
+    setSizeBucket('all')
+    setAgeBucket('all')
+    if (searchParams.size > 0) {
+      setSearchParams({}, { replace: true })
+    }
+  }
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -108,7 +181,7 @@ export function ExplorerPage() {
         <div>
           <span className="eyebrow">EXPLORER</span>
           <h1>文件浏览</h1>
-          <p>虚拟列表按可视区域高性能渲染，支持按列实时排序与快捷键检索。</p>
+          <p>支持目录递归体积排序、多维组合过滤与单击本地沙盒快速预览。</p>
         </div>
       </div>
 
@@ -132,7 +205,9 @@ export function ExplorerPage() {
                 <X size={14} />
               </button>
             ) : (
-              <kbd className="kbd-hint" title="按 / 键快速聚焦">/</kbd>
+              <kbd className="kbd-hint" title="按 / 键快速聚焦">
+                /
+              </kbd>
             )}
           </label>
 
@@ -166,7 +241,95 @@ export function ExplorerPage() {
             </button>
           </div>
 
-          <span className="result-count tabular-nums">匹配 {filtered.length.toLocaleString()} 条</span>
+          <span className="result-count tabular-nums">
+            匹配 {filtered.length.toLocaleString()} 条
+            {filteredTotalSize > 0 ? ` · ${formatBytes(filteredTotalSize)}` : ''}
+          </span>
+        </div>
+
+        <div className="explorer-subtoolbar">
+          <div className="category-pills-row" role="group" aria-label="文件大类快捷筛选">
+            {CATEGORY_OPTIONS.map((opt) => (
+              <button
+                type="button"
+                key={opt.value}
+                className={category === opt.value ? 'chip-btn active' : 'chip-btn'}
+                onClick={() => {
+                  setCategory(opt.value)
+                  if (opt.value !== 'all' && kind === 'directory') setKind('all')
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="explorer-selects-row">
+            <select
+              className="compact-select"
+              aria-label="按体积区间筛选"
+              value={sizeBucket}
+              onChange={(event) => setSizeBucket(event.target.value)}
+            >
+              <option value="all">全部体积区间</option>
+              {SIZE_BUCKETS.map((bucket) => (
+                <option key={bucket} value={bucket}>
+                  体积：{bucket}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="compact-select"
+              aria-label="按修改时间筛选"
+              value={ageBucket}
+              onChange={(event) => setAgeBucket(event.target.value)}
+            >
+              <option value="all">全部修改时间</option>
+              {AGE_BUCKETS.map((bucket) => (
+                <option key={bucket} value={bucket}>
+                  时间：{bucket}
+                </option>
+              ))}
+            </select>
+
+            {extParam && (
+              <button
+                type="button"
+                className="chip-btn active"
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams)
+                  next.delete('ext')
+                  setSearchParams(next, { replace: true })
+                }}
+              >
+                <span>扩展名: .{extParam.toUpperCase()}</span>
+                <X size={11} />
+              </button>
+            )}
+
+            {parentParam && (
+              <button
+                type="button"
+                className="chip-btn active"
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams)
+                  next.delete('parent')
+                  setSearchParams(next, { replace: true })
+                }}
+              >
+                <span>限定目录: {parentParam.split('/').at(-1)}</span>
+                <X size={11} />
+              </button>
+            )}
+
+            {hasActiveFilters && (
+              <button type="button" className="chip-btn reset" onClick={clearAllFilters}>
+                <FilterX size={12} />
+                <span>重置筛选</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="table-head">
@@ -191,7 +354,14 @@ export function ExplorerPage() {
         <div ref={parentRef} className="virtual-list">
           {filtered.length === 0 ? (
             <div className="explorer-empty">
-              <p>没有匹配「{query}」的条目，请尝试其他关键词或切换类型筛选。</p>
+              <div>
+                <p>没有匹配当前筛选条件的条目。</p>
+                {hasActiveFilters && (
+                  <button type="button" className="chip-btn active" onClick={clearAllFilters}>
+                    清空筛选条件
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
@@ -199,8 +369,9 @@ export function ExplorerPage() {
                 const entry = filtered[virtualRow.index]
                 return (
                   <div
-                    className="file-row"
+                    className="file-row file-row-clickable"
                     key={entry.id}
+                    onClick={() => openPreview(entry.id)}
                     style={{
                       position: 'absolute',
                       top: 0,
@@ -216,22 +387,35 @@ export function ExplorerPage() {
                         <strong>{entry.name}</strong>
                         <small>{entry.relativePath}</small>
                       </div>
-                      <button
-                        type="button"
-                        className="row-copy-btn"
-                        title="复制相对路径"
-                        aria-label={`复制 ${entry.name} 路径`}
-                        onClick={() => void handleCopyPath(entry.relativePath)}
-                      >
-                        <Copy size={13} />
-                      </button>
+                      <div className="row-hover-actions" onClick={(event) => event.stopPropagation()}>
+                        <button
+                          type="button"
+                          className="row-copy-btn"
+                          title="本地预览详情"
+                          aria-label={`预览 ${entry.name}`}
+                          onClick={() => openPreview(entry.id)}
+                        >
+                          <Eye size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          className="row-copy-btn"
+                          title="复制相对路径"
+                          aria-label={`复制 ${entry.name} 路径`}
+                          onClick={() => void handleCopyPath(entry.relativePath)}
+                        >
+                          <Copy size={13} />
+                        </button>
+                      </div>
                     </div>
                     <span>
                       <b className="ext-pill">
-                        {entry.kind === 'directory' ? '文件夹' : entry.extension.toUpperCase()}
+                        {entry.kind === 'directory'
+                          ? `文件夹${entry.childFileCount ? ` · ${entry.childFileCount}` : ''}`
+                          : entry.extension.toUpperCase()}
                       </b>
                     </span>
-                    <span className="tabular-nums">{entry.kind === 'file' ? formatBytes(entry.size) : '—'}</span>
+                    <span className="tabular-nums">{formatBytes(entry.size)}</span>
                     <span className="tabular-nums">
                       {entry.lastModified ? new Date(entry.lastModified).toLocaleString('zh-CN') : '—'}
                     </span>

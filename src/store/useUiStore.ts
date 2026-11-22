@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { ScanConfig } from '../types'
 
 export type ThemeMode = 'dark' | 'light'
 export type ToastTone = 'info' | 'success' | 'warning' | 'error'
@@ -10,15 +11,42 @@ export interface ToastItem {
   tone: ToastTone
 }
 
+export const DEFAULT_IGNORE_NAMES = [
+  'node_modules',
+  '.git',
+  '.idea',
+  '.vscode',
+  'dist',
+  'build',
+  'target',
+  '.next',
+  '.cache',
+]
+
+export const DEFAULT_SCAN_CONFIG: ScanConfig = {
+  ignoreDefaults: true,
+  customIgnores: [],
+  skipHidden: false,
+  maxDepth: null,
+}
+
 interface UiState {
   theme: ThemeMode
   isDemo: boolean
   toasts: ToastItem[]
+  previewEntryId: string | null
+  commandPaletteOpen: boolean
+  scanConfig: ScanConfig
   setTheme: (theme: ThemeMode) => void
   toggleTheme: () => void
   setIsDemo: (isDemo: boolean) => void
   pushToast: (toast: Omit<ToastItem, 'id'>, durationMs?: number) => void
   dismissToast: (id: string) => void
+  openPreview: (entryId: string) => void
+  closePreview: () => void
+  setCommandPaletteOpen: (open: boolean) => void
+  updateScanConfig: (patch: Partial<ScanConfig>) => void
+  resetScanConfig: () => void
 }
 
 function getInitialTheme(): ThemeMode {
@@ -30,6 +58,34 @@ function getInitialTheme(): ThemeMode {
     // Ignore storage access errors in restricted sandbox contexts
   }
   return 'dark'
+}
+
+function getInitialScanConfig(): ScanConfig {
+  if (typeof window === 'undefined') return { ...DEFAULT_SCAN_CONFIG }
+  try {
+    const raw = window.localStorage.getItem('fileatlas-scan-config')
+    if (!raw) return { ...DEFAULT_SCAN_CONFIG }
+    const parsed = JSON.parse(raw) as Partial<ScanConfig>
+    return {
+      ignoreDefaults: typeof parsed.ignoreDefaults === 'boolean' ? parsed.ignoreDefaults : true,
+      customIgnores: Array.isArray(parsed.customIgnores)
+        ? parsed.customIgnores.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+        : [],
+      skipHidden: typeof parsed.skipHidden === 'boolean' ? parsed.skipHidden : false,
+      maxDepth: typeof parsed.maxDepth === 'number' && parsed.maxDepth > 0 ? parsed.maxDepth : null,
+    }
+  } catch {
+    return { ...DEFAULT_SCAN_CONFIG }
+  }
+}
+
+function persistScanConfig(config: ScanConfig): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem('fileatlas-scan-config', JSON.stringify(config))
+  } catch {
+    // Ignore storage access errors
+  }
 }
 
 function applyThemeToDocument(theme: ThemeMode): void {
@@ -48,6 +104,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   theme: initialTheme,
   isDemo: false,
   toasts: [],
+  previewEntryId: null,
+  commandPaletteOpen: false,
+  scanConfig: getInitialScanConfig(),
   setTheme: (theme) => {
     applyThemeToDocument(theme)
     try {
@@ -74,4 +133,17 @@ export const useUiStore = create<UiState>((set, get) => ({
     }
   },
   dismissToast: (id) => set((state) => ({ toasts: state.toasts.filter((item) => item.id !== id) })),
+  openPreview: (entryId) => set({ previewEntryId: entryId }),
+  closePreview: () => set({ previewEntryId: null }),
+  setCommandPaletteOpen: (commandPaletteOpen) => set({ commandPaletteOpen }),
+  updateScanConfig: (patch) => {
+    const next: ScanConfig = { ...get().scanConfig, ...patch }
+    persistScanConfig(next)
+    set({ scanConfig: next })
+  },
+  resetScanConfig: () => {
+    const next = { ...DEFAULT_SCAN_CONFIG }
+    persistScanConfig(next)
+    set({ scanConfig: next })
+  },
 }))

@@ -1,17 +1,42 @@
-import { useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Copy, Fingerprint, LoaderCircle } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import {
+  AlertTriangle,
+  Award,
+  CheckCircle2,
+  Copy,
+  Eye,
+  FileCode2,
+  Fingerprint,
+  LoaderCircle,
+  Terminal,
+  XCircle,
+} from 'lucide-react'
 import { EmptyState } from '../components/EmptyState'
 import { FileTypeIcon } from '../components/FileBadge'
-import { findDuplicates } from '../services/duplicates'
+import { findDuplicatesWithSummary } from '../services/duplicates'
+import { exportDuplicateQuarantineScript } from '../services/export'
 import { useFileAtlasStore } from '../store/useFileAtlasStore'
 import { useUiStore } from '../store/useUiStore'
 import { formatBytes } from '../utils/file'
 import { copyTextToClipboard, handleSpotlightMove } from '../utils/spotlight'
 
 export function DuplicatesPage() {
-  const { entries, files, status, duplicates, duplicateStatus, setDuplicates, setDuplicateStatus } = useFileAtlasStore()
-  const { pushToast } = useUiStore()
+  const {
+    rootName,
+    entries,
+    files,
+    status,
+    duplicates,
+    duplicateStatus,
+    duplicateProgress,
+    duplicateSkippedCount,
+    setDuplicates,
+    setDuplicateStatus,
+    setDuplicateProgress,
+  } = useFileAtlasStore()
+  const { pushToast, openPreview } = useUiStore()
   const [filter, setFilter] = useState<'all' | 'confirmed' | 'probable'>('all')
+  const abortRef = useRef<AbortController | null>(null)
 
   const totalReclaimable = useMemo(
     () => duplicates.reduce((sum, group) => sum + group.reclaimableSize, 0),
@@ -26,20 +51,46 @@ export function DuplicatesPage() {
   if (status === 'idle') return <EmptyState />
 
   const run = async () => {
+    const controller = new AbortController()
+    abortRef.current = controller
     setDuplicateStatus('running')
+    setDuplicateProgress(null)
     try {
-      const found = await findDuplicates(entries, files)
-      setDuplicates(found)
-      const reclaimable = found.reduce((sum, item) => sum + item.reclaimableSize, 0)
-      pushToast({
-        tone: found.length > 0 ? 'success' : 'info',
-        title: found.length > 0 ? `发现 ${found.length} 组重复文件` : '未发现重复文件',
-        message: found.length > 0 ? `预计可释放 ${formatBytes(reclaimable)} 空间` : '所有同体积候选均未命中相同指纹',
+      const { groups, skippedCount } = await findDuplicatesWithSummary(entries, files, {
+        onProgress: setDuplicateProgress,
+        signal: controller.signal,
       })
-    } catch {
+      setDuplicates(groups, skippedCount)
+      const reclaimable = groups.reduce((sum, item) => sum + item.reclaimableSize, 0)
+      pushToast({
+        tone: groups.length > 0 ? 'success' : 'info',
+        title: groups.length > 0 ? `发现 ${groups.length} 组重复文件` : '未发现重复文件',
+        message:
+          groups.length > 0
+            ? `预计可释放 ${formatBytes(reclaimable)} 空间`
+            : '所有同体积候选均未命中相同指纹',
+      })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setDuplicateStatus(duplicates.length > 0 ? 'complete' : 'idle')
+        setDuplicateProgress(null)
+        pushToast({ tone: 'info', title: '已取消重复文件检测' })
+        return
+      }
       setDuplicateStatus('error')
-      pushToast({ tone: 'error', title: '重复检测失败', message: '请检查当前浏览器 Web Worker 与 Web Crypto 支持状态。' })
+      setDuplicateProgress(null)
+      pushToast({
+        tone: 'error',
+        title: '重复检测失败',
+        message: '请检查当前浏览器 Web Worker 与 Web Crypto 支持状态。',
+      })
+    } finally {
+      abortRef.current = null
     }
+  }
+
+  const cancelRun = () => {
+    abortRef.current?.abort()
   }
 
   const handleCopyPath = async (path: string) => {
@@ -48,23 +99,39 @@ export function DuplicatesPage() {
     }
   }
 
+  const handleExportQuarantine = (shell: 'sh' | 'ps1') => {
+    exportDuplicateQuarantineScript(duplicates, rootName || 'workspace', shell)
+    pushToast({
+      tone: 'success',
+      title: `已生成 ${shell === 'sh' ? 'Bash' : 'PowerShell'} 安全隔离脚本`,
+      message: '脚本仅将冗余副本移入隔离目录，不执行直接删除。',
+    })
+  }
+
+  const progressPct =
+    duplicateProgress && duplicateProgress.total > 0
+      ? Math.min(100, Math.round((duplicateProgress.processed / duplicateProgress.total) * 100))
+      : 0
+
   return (
     <div className="page-stack">
       <div className="page-heading">
         <div>
           <span className="eyebrow">DUPLICATES</span>
           <h1>重复文件检测</h1>
-          <p>三级递进校验：同体积筛选 → 首中尾 64 KB 抽样哈希 → 128 MB 内完整 SHA-256 精确确认。</p>
+          <p>按大体积优先排序候选 → 首中尾 64 KB 抽样哈希 → 128 MB 内完整 SHA-256 精确确认，并给出智能保留建议。</p>
         </div>
-        <button
-          type="button"
-          className="button primary-button"
-          disabled={duplicateStatus === 'running'}
-          onClick={() => void run()}
-        >
-          {duplicateStatus === 'running' ? <LoaderCircle className="spin" size={17} /> : <Fingerprint size={17} />}
-          <span>{duplicateStatus === 'running' ? '正在计算哈希…' : duplicates.length ? '重新检测' : '开始深度检测'}</span>
-        </button>
+        {duplicateStatus === 'running' ? (
+          <button type="button" className="button danger-button" onClick={cancelRun}>
+            <XCircle size={17} />
+            <span>取消检测</span>
+          </button>
+        ) : (
+          <button type="button" className="button primary-button" onClick={() => void run()}>
+            <Fingerprint size={17} />
+            <span>{duplicates.length ? '重新检测' : '开始深度检测'}</span>
+          </button>
+        )}
       </div>
 
       <div className="metric-strip">
@@ -77,10 +144,19 @@ export function DuplicatesPage() {
           <strong className="tabular-nums accent-emerald">{formatBytes(totalReclaimable)}</strong>
         </div>
         <div>
-          <span>单次保护上限</span>
-          <strong className="tabular-nums">最多 5,000 个候选</strong>
+          <span>候选优先级策略</span>
+          <strong className="tabular-nums">大体积优先（上限 5,000）</strong>
         </div>
       </div>
+
+      {duplicateSkippedCount > 0 && (
+        <div className="notice warning">
+          <AlertTriangle size={18} />
+          <span>
+            同体积候选超出单次 5,000 上限，已优先完成体积最大的 5,000 个文件校验，跳过末尾 {duplicateSkippedCount.toLocaleString()} 个微小候选。
+          </span>
+        </div>
+      )}
 
       {duplicateStatus === 'error' && (
         <div className="notice warning">
@@ -93,7 +169,7 @@ export function DuplicatesPage() {
         <EmptyState
           variant="inline"
           title="尚未执行深度指纹校验"
-          description="点击右上角「开始深度检测」后，Web Worker 将在本地读取同体积候选并计算 SHA-256 指纹。"
+          description="点击右上角「开始深度检测」后，Web Worker 将按文件从大到小在本地计算 SHA-256 指纹。"
           action={
             <button type="button" className="button primary-button" onClick={() => void run()}>
               <Fingerprint size={17} />
@@ -106,8 +182,19 @@ export function DuplicatesPage() {
       {duplicateStatus === 'running' && (
         <div className="panel scanning-placeholder">
           <LoaderCircle className="spin" size={26} />
-          <strong>正在后台 Worker 中计算 SHA-256 指纹…</strong>
-          <p>文件内容仅在本地内存中分片读取，不会发送到任何外部服务器。</p>
+          <strong>
+            {duplicateProgress
+              ? duplicateProgress.phase === 'sampling'
+                ? `正在执行抽样哈希校验 (${duplicateProgress.processed.toLocaleString()} / ${duplicateProgress.total.toLocaleString()})…`
+                : `正在执行完整 SHA-256 精确确认 (${duplicateProgress.processed.toLocaleString()} / ${duplicateProgress.total.toLocaleString()})…`
+              : '正在后台 Worker 中准备同体积分组…'}
+          </strong>
+          {duplicateProgress && (
+            <div className="inline-progress-track" role="progressbar" aria-valuenow={progressPct}>
+              <span className="inline-progress-fill" style={{ width: `${progressPct}%` }} />
+            </div>
+          )}
+          <p>文件内容仅在本地内存中分片读取，可随时点击右上角取消。</p>
         </div>
       )}
 
@@ -119,7 +206,7 @@ export function DuplicatesPage() {
         />
       )}
 
-      {duplicates.length > 0 && (
+      {duplicates.length > 0 && duplicateStatus !== 'running' && (
         <>
           <div className="filter-bar">
             <div className="segmented-tabs">
@@ -145,6 +232,27 @@ export function DuplicatesPage() {
               >
                 抽样指纹一致{' '}
                 <em className="tabular-nums">{duplicates.filter((g) => g.certainty === 'probable').length}</em>
+              </button>
+            </div>
+
+            <div className="script-export-actions">
+              <button
+                type="button"
+                className="chip-btn active"
+                title="生成将冗余副本移入隔离目录的 macOS/Linux 脚本"
+                onClick={() => handleExportQuarantine('sh')}
+              >
+                <Terminal size={12} />
+                <span>生成隔离脚本 (.sh)</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                title="生成将冗余副本移入隔离目录的 Windows PowerShell 脚本"
+                onClick={() => handleExportQuarantine('ps1')}
+              >
+                <FileCode2 size={12} />
+                <span>PowerShell (.ps1)</span>
               </button>
             </div>
           </div>
@@ -181,27 +289,43 @@ export function DuplicatesPage() {
                         <div className="duplicate-file-main">
                           <FileTypeIcon kind="file" extension={file.extension} size={15} />
                           <span>{file.name}</span>
+                          {file.isRecommendedKeep && (
+                            <b className="keep-recommend-pill" title={file.keepReason}>
+                              <Award size={11} /> 推荐保留
+                            </b>
+                          )}
                         </div>
                         <div className="duplicate-file-path">
                           <small>{file.relativePath}</small>
-                          <button
-                            type="button"
-                            className="mini-action-btn"
-                            title="复制文件相对路径"
-                            aria-label={`复制 ${file.name} 路径`}
-                            onClick={() => void handleCopyPath(file.relativePath)}
-                          >
-                            <Copy size={13} />
-                          </button>
+                          <div className="row-inline-btns">
+                            <button
+                              type="button"
+                              className="mini-action-btn"
+                              title="预览文件详情"
+                              aria-label={`预览 ${file.name}`}
+                              onClick={() => openPreview(file.id)}
+                            >
+                              <Eye size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              className="mini-action-btn"
+                              title="复制文件相对路径"
+                              aria-label={`复制 ${file.name} 路径`}
+                              onClick={() => void handleCopyPath(file.relativePath)}
+                            >
+                              <Copy size={13} />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
 
                   <footer>
-                    <span>保留其中 1 份副本，预计可释放 </span>
+                    <span>保留「推荐保留」主副本后，预计可释放 </span>
                     <strong className="tabular-nums">{formatBytes(group.reclaimableSize)}</strong>
-                    <span> · 当前只读模式不执行自动删除。</span>
+                    <span> · 可导出上方安全隔离脚本辅助本地归档清理。</span>
                   </footer>
                 </article>
               )

@@ -13,6 +13,8 @@ export interface FileEntryRecord {
   lastModified: number
   depth: number
   isEmptyDirectory?: boolean
+  childFileCount?: number
+  childDirectoryCount?: number
 }
 
 export interface ScanProgress {
@@ -20,6 +22,13 @@ export interface ScanProgress {
   directories: number
   totalSize: number
   currentPath: string
+}
+
+export interface ScanConfig {
+  ignoreDefaults: boolean
+  customIgnores: string[]
+  skipHidden: boolean
+  maxDepth: number | null
 }
 
 export interface ScanStatistics {
@@ -32,12 +41,21 @@ export interface ScanStatistics {
   maxDepth: number
   typeCounts: Record<string, { count: number; size: number }>
   sizeBuckets: Record<string, number>
+  ageBuckets: Record<string, { count: number; size: number }>
   largestFiles: FileEntryRecord[]
+}
+
+export interface DuplicateProgress {
+  phase: 'sampling' | 'full'
+  processed: number
+  total: number
 }
 
 export interface DuplicateFile extends FileEntryRecord {
   certainty: 'confirmed' | 'probable'
   hash: string
+  isRecommendedKeep?: boolean
+  keepReason?: string
 }
 
 export interface DuplicateGroup {
@@ -45,6 +63,7 @@ export interface DuplicateGroup {
   size: number
   reclaimableSize: number
   certainty: 'confirmed' | 'probable'
+  recommendedKeepId?: string
   files: DuplicateFile[]
 }
 
@@ -61,6 +80,7 @@ export interface SnapshotDiff {
   added: FileEntryRecord[]
   removed: FileEntryRecord[]
   modified: Array<{ before: FileEntryRecord; after: FileEntryRecord }>
+  moved: Array<{ before: FileEntryRecord; after: FileEntryRecord }>
   unchanged: number
   totalSizeDelta: number
 }
@@ -71,6 +91,15 @@ export interface BrowserCapabilities {
   indexedDB: boolean
   webWorker: boolean
   webCrypto: boolean
+}
+
+export interface RecentDirectoryRecord {
+  id: string
+  name: string
+  lastScannedAt: number
+  fileCount: number
+  totalSize: number
+  handle?: FileSystemDirectoryHandle
 }
 
 export interface ScanResult {
